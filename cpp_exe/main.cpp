@@ -1,5 +1,6 @@
 #include "../c_lib/sharedlib.h"
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -37,9 +38,10 @@ int main() {
     cleanup(handle);
   }
 
-  MyData *myData = mojo_fn("NEOMAMA", 99);
+  auto myData_ptr = mojo_fn("NEOMAMA", 99);
 
-  assert(std::strcmp(myData->name, "NEOMAMA") == 0);
+  assert(std::strcmp(myData_ptr->name, "NEOMAMA") == 0);
+  assert(myData_ptr->value == 99);
 
   cleanup(handle);
 

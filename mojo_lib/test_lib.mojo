@@ -1,14 +1,14 @@
 from memory import UnsafePointer
-from testing import assert_equal
+from testing import assert_equal, assert_true
 from my_shared_lib import CLibHandler, MyData
 
 fn test_create_my_data() raises:
   var handler = CLibHandler()
   var data = handler.create("YOMAMA", 42)
-
   
-  assert_equal("YOMAMA", String(unsafe_from_utf8_ptr=data[].Name))
-  assert_equal(42, data[].Value)
+  assert_true(data)
+  assert_equal("YOMAMA", String(unsafe_from_utf8_ptr=data[][].Name))
+  assert_equal(42, data[][].Value)
 
 fn test_modify_my_data() raises:
   var handler = CLibHandler()
@@ -24,4 +24,4 @@ fn test_delete_my_data() raises:
   var handler = CLibHandler()
   var data = handler.create("YOMAMA", 42)
 
-  handler.delete(data)
+  handler.delete(data[])
