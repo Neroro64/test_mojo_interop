@@ -1,0 +1,115 @@
+#!/bin/bash
+
+# This script acts as a proxy for the 'ld' linker,
+# allowing custom C library linking with Mojo programs.
+# It should be placed in a directory prepended to your PATH.
+
+# Configuration for your custom libraries
+# Set these to your actual object file/library path
+# IMPORTANT: Based on the Python script's output, it seems you need to link
+# an object file directly, not a library using -l.
+# If your C code is compiled into 'libmylib.o' in your CWD:
+CUSTOM_C_OBJECTS_OR_LIBS="libmylib.o" # Adjust this to your specific .o file or .a/.so path/flag
+
+# Example for a dynamic library like -lfoo -L/path/to/foo
+# CUSTOM_C_OBJECTS_OR_LIBS="-L/path/to/your/clib -lfoo"
+
+# Set this to 'true' if you intend to build a shared Mojo library (.so)
+# Set to 'false' if you intend to build an executable (as in your example)
+BUILDING_SHARED_LIB=false # Based on your working Python output, this should be false for executables
+
+# --- DO NOT MODIFY BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING ---
+
+REAL_LD="/usr/bin/ld" # Path to the real linker. Adjust if yours is different.
+
+# Ensure the real ld exists
+if [ ! -f "$REAL_LD" ]; then
+    echo "Error: Real linker '$REAL_LD' not found. Please adjust REAL_LD variable." >&2
+    exit 1
+fi
+
+# Capture all arguments passed to this ld wrapper
+ARGS=("$@")
+MODIFIED_ARGS=()
+INSERTED_CUSTOM_C=false
+
+# Flags that need to be removed IF BUILDING_SHARED_LIB is true
+# Your working Python script includes -pie and --gc-sections, so for executable builds,
+# we should *not* remove them.
+FLAGS_TO_REMOVE_FOR_SHARED=("-pie" "--gc-sections")
+
+# Iterate through the original arguments to build the modified list
+i=0
+while (( i < ${#ARGS[@]} )); do
+    arg="${ARGS[i]}"
+
+    # Handle Mojo's internal static archive in /tmp
+    if [[ "$arg" == "/tmp/"* && "$arg" == *.a ]]; then
+        # This is the point where the Python script inserts the custom C object/library *before* this archive.
+        # So, if we haven't inserted it yet, do it now.
+        if ! $INSERTED_CUSTOM_C; then
+            echo "Inserting custom C objects/libraries before Mojo's archive ($arg)." >&2
+            # Add custom link paths/libraries/objects
+            for c_arg in $CUSTOM_C_OBJECTS_OR_LIBS; do
+                MODIFIED_ARGS+=( "$c_arg" )
+            done
+            INSERTED_CUSTOM_C=true
+        fi
+        # Now add the Mojo archive itself
+        MODIFIED_ARGS+=( "--whole-archive" "$arg" "--no-whole-archive" )
+        ((i++))
+        continue
+    fi
+
+    # Handle Scrt1.o (startup file for executables, generally removed for shared libs)
+    # The working Python script *includes* Scrt1.o, so we only remove it if we explicitly want a shared lib.
+    if $BUILDING_SHARED_LIB && [[ "$arg" =~ Scrt1\.o$ ]]; then
+        echo "Removing $arg for shared library build." >&2
+        ((i++))
+        continue # Skip this argument
+    fi
+
+    # Remove other problematic flags for shared libraries (if BUILDING_SHARED_LIB is true)
+    if $BUILDING_SHARED_LIB; then
+        REMOVE=false
+        for remove_flag in "${FLAGS_TO_REMOVE_FOR_SHARED[@]}"; do
+            if [[ "$arg" == "$remove_flag" ]]; then
+                echo "Removing $arg for shared library build." >&2
+                REMOVE=true
+                break
+            fi
+        done
+        if $REMOVE; then
+            ((i++))
+            continue # Skip this argument
+        fi
+    fi
+
+    MODIFIED_ARGS+=( "$arg" )
+    ((i++))
+done
+
+# If custom C objects/libraries were not inserted (e.g., no Mojo archive found, or it's last),
+# then append them to the end of the argument list. This might not be ideal but is a fallback.
+if ! $INSERTED_CUSTOM_C; then
+    echo "Warning: Custom C objects/libraries were appended at the end (couldn't find optimal insertion point)." >&2
+    for c_arg in $CUSTOM_C_OBJECTS_OR_LIBS; do
+        MODIFIED_ARGS+=( "$c_arg" )
+    done
+fi
+
+
+# Add -shared flag if building a shared library (insert at beginning for clarity)
+if $BUILDING_SHARED_LIB; then
+    echo "Adding -shared flag for shared library build." >&2
+    MODIFIED_ARGS=( "-shared" "${MODIFIED_ARGS[@]}" )
+fi
+
+# Debugging output
+echo "--------------------------------------------------------" >&2
+echo "Executing real ld with arguments (from wrapper):" >&2
+echo "$REAL_LD ${MODIFIED_ARGS[@]}" >&2
+echo "--------------------------------------------------------" >&2
+
+# Execute the real ld
+exec "$REAL_LD" "${MODIFIED_ARGS[@]}"
